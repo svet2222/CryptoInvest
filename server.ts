@@ -1645,13 +1645,12 @@ async function startServer() {
   // --- STATIC FRONTEND SERVING ---
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-  // Serve frontend static files from dist
-  const distPath = path.join(__dirname, "dist");
-  app.use(express.static(distPath));
+  // Serve static files from dist
+  app.use(express.static(path.join(__dirname, "dist")));
 
-  // SPA fallback route for React frontend
+  // SPA fallback route for React frontend (must be after all API routes)
   app.get("*", (req, res) => {
-    res.sendFile(path.join(distPath, "index.html"));
+    res.sendFile(path.join(__dirname, "dist", "index.html"));
   });
 
   app.listen(PORT, "0.0.0.0", () => {
