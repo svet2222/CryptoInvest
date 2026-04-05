@@ -12,6 +12,20 @@ import fs from "fs";
 
 dotenv.config();
 
+// MongoDB Connection
+import mongoose from "mongoose";
+const MONGO_URI = process.env.MONGODB_URI;
+if (!MONGO_URI) {
+  console.error("MONGODB_URI not set");
+  process.exit(1);
+}
+mongoose.connect(MONGO_URI)
+  .then(() => console.log("Connected to MongoDB"))
+  .catch((err) => {
+    console.error("MongoDB connection error:", err);
+    process.exit(1);
+  });
+
 // Ensure uploads directory exists
 const uploadDir = path.join(process.cwd(), "uploads");
 if (!fs.existsSync(uploadDir)) {
@@ -34,7 +48,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret";
-const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/cryptoinvest";
+// MONGODB_URI is now handled above
 
 // --- MODELS ---
 const userSchema = new mongoose.Schema({
@@ -378,25 +392,7 @@ async function startServer() {
   app.use(cors());
   app.use(express.json());
 
-  // Connect to MongoDB
-  const connectDB = async () => {
-    if (!process.env.MONGODB_URI) {
-      console.warn("⚠️ WARNING: MONGODB_URI is not set in Secrets. Falling back to localhost (which will fail in this environment).");
-    }
-
-    try {
-      await mongoose.connect(MONGODB_URI, {
-        serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
-      });
-      console.log("✅ Connected to MongoDB");
-    } catch (err: any) {
-      console.error("❌ CRITICAL: Could not connect to MongoDB.");
-      console.error("Error details:", err.message);
-      console.error("👉 FIX: Add 'MONGODB_URI' to your Secrets in the Settings menu with a valid MongoDB Atlas connection string.");
-    }
-  };
-
-  await connectDB();
+  // MongoDB connection is now handled before server starts
 
   // Start Profit Engine after successful DB connection
   console.log("🚀 Starting Profit Engine...");
@@ -1642,15 +1638,20 @@ async function startServer() {
     }
   });
 
-  // --- STATIC FRONTEND SERVING ---
+  // --- STATIC FRONTEND SERVING (AFTER API ROUTES) ---
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
   // Serve static files from dist
-  app.use(express.static(path.join(__dirname, "dist")));
+  app.use(express.static(path.join(__dirname, 'dist')));
 
-  // SPA fallback route for React frontend (must be after all API routes)
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(__dirname, "dist", "index.html"));
+  // Root route for React app
+  app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
+  });
+
+  // Catch-all route for React SPA (must be after all API routes)
+  app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
   });
 
   app.listen(PORT, "0.0.0.0", () => {
