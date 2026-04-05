@@ -1,8 +1,8 @@
+
 import express from "express";
-import { createServer as createViteServer } from "vite";
+import mongoose from "mongoose";
 import path from "path";
 import { fileURLToPath } from "url";
-import mongoose from "mongoose";
 import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
 import cors from "cors";
@@ -11,10 +11,6 @@ import multer from "multer";
 import fs from "fs";
 
 dotenv.config();
-
-// MongoDB Connection
-// Removed duplicate import
-// MongoDB connection is handled in startServer()
 
 // Ensure uploads directory exists
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -37,65 +33,449 @@ const upload = multer({ storage: storage });
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const app = express();
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-const MONGO_URI = process.env.MONGODB_URI;
+const JWT_SECRET = process.env.JWT_SECRET || "fallback_secret";
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/cryptoinvest";
 
-app.use(cors());
-app.use(express.json());
-
-// Serve static frontend (dist) for production
-import path from "path";
-import { fileURLToPath } from "url";
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-app.use(express.static(path.join(__dirname, "dist")));
-
-// --- API ROUTES ---
-// ...existing API routes here (no changes to route logic, just move them outside startServer)
-
-// SPA fallback (for React Router)
-app.get("*", (req, res) => {
-  res.sendFile(path.join(__dirname, "dist", "index.html"));
+// --- MODELS ---
+const userSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  walletBalance: { type: Number, default: 0 },
+  totalDeposits: { type: Number, default: 0 },
+  totalWithdrawals: { type: Number, default: 0 },
+  referralCode: { type: String, unique: true },
+  referredBy: { type: String, default: null },
+  totalReferralEarnings: { type: Number, default: 0 },
+  totalProfitEarned: { type: Number, default: 0 },
+  totalBonusReceived: { type: Number, default: 0 },
+  bonusBalance: { type: Number, default: 0 },
+  hasSeenBonusPopup: { type: Boolean, default: false },
+  hasDeposited: { type: Boolean, default: false },
+  role: { type: String, enum: ["user", "admin"], default: "user" },
+  isVerified: { type: Boolean, default: false },
+  kyc: {
+    firstName: String,
+    lastName: String,
+    email: String,
+    phone: String,
+    country: String,
+    state: String,
+    city: String,
+    address: String,
+    pincode: String,
+    idFrontImage: String,
+    idBackImage: String,
+    status: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: null
+    },
+    submittedAt: Date
+  },
+  createdAt: { type: Date, default: Date.now },
 });
 
-async function startServer() {
+const depositSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  amount: { type: Number, required: true },
+  txHash: { type: String, required: true },
+  promoCode: { type: String, default: null },
+  status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+  timestamp: { type: Date, default: Date.now },
+});
+
+const withdrawalSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  amount: { type: Number, required: true },
+  charge: { type: Number, default: 0 },
+  finalAmount: { type: Number, required: true },
+  status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+  timestamp: { type: Date, default: Date.now },
+});
+
+const feesSchema = new mongoose.Schema({
+  fixedCharge: { type: Number, default: 0 },
+  percentageCharge: { type: Number, default: 0 },
+  minAmount: { type: Number, default: 10 },
+  maxAmount: { type: Number, default: 10000 },
+  dailyLimit: { type: Number, default: 5000 },
+  monthlyLimit: { type: Number, default: 50000 },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+const investmentSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  planName: { type: String, required: true },
+  amount: { type: Number, required: true },
+  minDailyProfit: { type: Number, required: true },
+  maxDailyProfit: { type: Number, required: true },
+  duration: { type: Number, required: true },
+  startDate: { type: Date, default: null },
+  maturityDate: { type: Date, required: true },
+  lastProfitDate: { type: Date, default: null },
+  totalProfitEarned: { type: Number, default: 0 },
+  status: { type: String, enum: ["pending", "active", "completed", "rejected"], default: "pending" },
+});
+
+const profitHistorySchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  investmentId: { type: mongoose.Schema.Types.ObjectId, ref: "Investment", required: true },
+  amountInvested: { type: Number, required: true },
+  amount: { type: Number, required: true },
+  percentage: { type: Number, required: true },
+  timestamp: { type: Date, default: Date.now },
+});
+
+const configSchema = new mongoose.Schema({
+  key: { type: String, required: true, unique: true },
+  value: { type: mongoose.Schema.Types.Mixed, required: true },
+});
+
+const referralHistorySchema = new mongoose.Schema({
+  referrerId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  referredId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  amount: { type: Number, required: true },
+  commission: { type: Number, required: true },
+  timestamp: { type: Date, default: Date.now },
+});
+
+const kycSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  firstName: String,
+  lastName: String,
+  email: String,
+  phone: String,
+  country: String,
+  state: String,
+  city: String,
+  address: String,
+  pincode: String,
+  idFrontImage: String,
+  idBackImage: String,
+  status: { type: String, enum: ["pending", "approved", "rejected"], default: "pending" },
+  submittedAt: { type: Date, default: Date.now },
+});
+
+const walletSchema = new mongoose.Schema({
+  coin: { type: String, default: "USDT" },
+  network: { type: String, required: true },
+  address: { type: String, required: true },
+  qrCode: { type: String },
+  status: { type: String, enum: ["active", "inactive"], default: "active" },
+  createdAt: { type: Date, default: Date.now },
+});
+
+const supportTicketSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  messages: [
+    {
+      sender: { type: String, enum: ["user", "admin"], required: true },
+      text: { type: String, required: true },
+      timestamp: { type: Date, default: Date.now }
+    }
+  ],
+  status: { type: String, enum: ["open", "closed"], default: "open" },
+  lastMessageAt: { type: Date, default: Date.now }
+});
+
+const User = mongoose.model("User", userSchema);
+const Deposit = mongoose.model("Deposit", depositSchema);
+const Withdrawal = mongoose.model("Withdrawal", withdrawalSchema);
+const Investment = mongoose.model("Investment", investmentSchema);
+const ProfitHistory = mongoose.model("ProfitHistory", profitHistorySchema);
+const Config = mongoose.model("Config", configSchema);
+const ReferralHistory = mongoose.model("ReferralHistory", referralHistorySchema);
+const KYC = mongoose.model("KYC", kycSchema);
+
+const bonusSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  amount: { type: Number, required: true },
+  type: { type: String, default: "deposit_bonus" },
+  status: { type: String, enum: ["locked", "unlocked"], default: "locked" },
+  promoCode: String,
+  createdAt: { type: Date, default: Date.now },
+});
+const offerSchema = new mongoose.Schema({
+  title: { type: String, required: true },
+  description: { type: String, required: true },
+  code: { type: String, required: true, unique: true },
+  bonusPercent: { type: Number, required: true },
+  minDeposit: { type: Number, required: true },
+  maxBonus: { type: Number, default: null },
+  startTime: { type: Date, required: true },
+  endTime: { type: Date, required: true },
+  isActive: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now }
+});
+const Offer = mongoose.model("Offer", offerSchema);
+
+const transactionSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  type: { type: String, enum: ["deposit", "withdrawal", "investment", "profit", "referral", "bonus"], required: true },
+  amount: { type: Number, required: true },
+  source: { type: String, default: null }, // e.g., "promo", "referral_commission"
+  status: { type: String, enum: ["pending", "completed", "failed"], default: "completed" },
+  timestamp: { type: Date, default: Date.now }
+});
+const Transaction = mongoose.model("Transaction", transactionSchema);
+
+const Bonus = mongoose.model("Bonus", bonusSchema);
+const Wallet = mongoose.model("Wallet", walletSchema);
+const Fees = mongoose.model("Fees", feesSchema);
+const SupportTicket = mongoose.model("SupportTicket", supportTicketSchema);
+
+const planSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  minAmount: { type: Number, required: true },
+  maxAmount: { type: Number, required: true },
+  minDailyProfit: { type: Number, required: true },
+  maxDailyProfit: { type: Number, required: true },
+  duration: { type: Number, required: true },
+  totalReturn: { type: Number, required: true },
+  status: { type: String, enum: ["active", "inactive"], default: "active" },
+  createdAt: { type: Date, default: Date.now }
+});
+const Plan = mongoose.model("Plan", planSchema);
+
+// --- PROFIT SIMULATION ENGINE ---
+const runProfitSimulation = async () => {
   try {
-    if (!MONGO_URI) {
-      throw new Error("MONGODB_URI not set");
+    if (mongoose.connection.readyState !== 1) {
+      console.log("[Profit Engine] Waiting for database connection...");
+      return;
     }
-    await mongoose.connect(MONGO_URI);
-    console.log("Connected to MongoDB");
-    app.listen(PORT, "0.0.0.0", () => {
-      console.log(`Server running on port ${PORT}`);
-    });
-  } catch (error) {
-    console.error("MongoDB connection failed:", error);
-    process.exit(1);
+    const isPaused = await Config.findOne({ key: "profit_system_paused" });
+    if (isPaused?.value === true) {
+      console.log("[Profit Engine] System is paused.");
+      return;
+    }
+
+    const mode = await Config.findOne({ key: "profit_system_mode" });
+    const isManual = mode?.value === "manual";
+
+    const activeInvestments = await Investment.find({ status: "active" });
+    console.log(`[Profit Engine] Processing ${activeInvestments.length} investments...`);
+
+    for (const inv of activeInvestments) {
+      const now = new Date();
+      
+      // Check maturity (Always automatic)
+      if (now >= inv.maturityDate) {
+        console.log(`[Profit Engine] Investment ${inv._id} matured. Completing.`);
+        await Investment.findByIdAndUpdate(inv._id, { status: "completed" });
+        await User.findByIdAndUpdate(inv.userId, {
+          $inc: { walletBalance: inv.amount }
+        });
+        
+        const transaction = new Transaction({
+          userId: inv.userId,
+          type: "investment",
+          amount: inv.amount,
+          source: `Investment Matured: ${inv.planName}`,
+          status: "completed"
+        });
+        await transaction.save();
+        continue; // Skip profit for this run if matured
+      }
+
+      // Skip auto-profit if in manual mode
+      if (isManual) continue;
+
+      // Check if 24 hours passed since last profit
+      let lastProfit: Date;
+      if (inv.lastProfitDate instanceof Date) {
+        lastProfit = inv.lastProfitDate;
+      } else if (inv.startDate instanceof Date) {
+        lastProfit = inv.startDate;
+      } else {
+        lastProfit = new Date();
+      }
+      const diffHours = (now.getTime() - lastProfit.getTime()) / (1000 * 60 * 60);
+
+      if (diffHours >= 23) {
+        const randomPercent = Math.random() * (inv.maxDailyProfit - inv.minDailyProfit) + inv.minDailyProfit;
+        const profitAmount = (inv.amount * randomPercent) / 100;
+
+        if (isNaN(profitAmount)) {
+          console.error(`[Profit Engine] Invalid profit calculation for investment ${inv._id}`);
+          continue;
+        }
+
+        console.log(`[Profit Engine] Applying ${randomPercent.toFixed(2)}% profit to investment ${inv._id}`);
+
+        // Update Investment
+        await Investment.findByIdAndUpdate(inv._id, {
+          $inc: { totalProfitEarned: profitAmount },
+          $set: { lastProfitDate: now }
+        });
+
+        // Update User Wallet with profit
+        await User.findByIdAndUpdate(inv.userId, {
+          $inc: { 
+            walletBalance: profitAmount,
+            totalProfitEarned: profitAmount
+          }
+        });
+
+        // Save History
+        const history = new ProfitHistory({
+          userId: inv.userId,
+          investmentId: inv._id,
+          amountInvested: inv.amount,
+          amount: profitAmount,
+          percentage: randomPercent,
+          timestamp: now
+        });
+        await history.save();
+
+        const transaction = new Transaction({
+          userId: inv.userId,
+          type: "profit",
+          amount: profitAmount,
+          source: `Auto Profit: ${inv.planName}`,
+          status: "completed"
+        });
+        await transaction.save();
+      }
+    }
+  } catch (err) {
+    console.error("[Profit Engine] Error:", err);
   }
-}
+};
 
-startServer();
-        txHash,
-        promoCode: promoCode || null,
-      });
-      await deposit.save();
-      res.status(201).json(deposit);
-    } catch (err: any) {
-      res.status(500).json({ message: err.message });
+// --- MIDDLEWARE ---
+const authenticate = async (req: any, res: any, next: any) => {
+  const token = req.headers.authorization?.split(" ")[1];
+  if (!token) return res.status(401).json({ message: "Unauthorized" });
+
+  try {
+    const decoded: any = jwt.verify(token, JWT_SECRET);
+    req.user = await User.findById(decoded.id).select("-password");
+    if (!req.user) {
+      console.warn(`[Auth] User not found for ID: ${decoded.id}`);
+      return res.status(401).json({ message: "User no longer exists" });
     }
-  });
+    next();
+  } catch (err: any) {
+    console.warn(`[Auth] Token verification failed: ${err.message}`);
+    res.status(401).json({ message: "Session expired or invalid. Please login again." });
+  }
+};
 
-  app.get("/api/deposits", authenticate, async (req: any, res) => {
+const isAdmin = (req: any, res: any, next: any) => {
+  if (req.user && req.user.role === "admin") {
+    next();
+  } else {
+    res.status(403).json({ message: "Admin access required" });
+  }
+};
+
+async function startServer() {
+  const app = express();
+  const PORT = 3000;
+
+  app.use(cors());
+  app.use(express.json());
+
+  // Connect to MongoDB
+  const connectDB = async () => {
+    if (!process.env.MONGODB_URI) {
+      console.warn("⚠️ WARNING: MONGODB_URI is not set in Secrets. Falling back to localhost (which will fail in this environment).");
+    }
+
     try {
-      const deposits = await Deposit.find({ userId: req.user._id }).sort({ timestamp: -1 });
-      res.json(deposits);
+      await mongoose.connect(MONGODB_URI, {
+        serverSelectionTimeoutMS: 5000, // Timeout after 5 seconds
+      });
+      console.log("✅ Connected to MongoDB");
+    } catch (err: any) {
+      console.error("❌ CRITICAL: Could not connect to MongoDB.");
+      console.error("Error details:", err.message);
+      console.error("👉 FIX: Add 'MONGODB_URI' to your Secrets in the Settings menu with a valid MongoDB Atlas connection string.");
+    }
+  };
+
+  await connectDB();
+
+  // Start Profit Engine after successful DB connection
+  console.log("🚀 Starting Profit Engine...");
+  setInterval(runProfitSimulation, 1000 * 60 * 60);
+  setTimeout(runProfitSimulation, 5000);
+
+  // Health check endpoint
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      database: mongoose.connection.readyState === 1 ? "connected" : "disconnected",
+      message: mongoose.connection.readyState === 1 ? "Database is ready" : "Database connection failed. Check MONGODB_URI secret."
+    });
+  });
+
+  // --- AUTH ROUTES ---
+  app.post("/api/auth/register", async (req, res) => {
+    const { name, email, password, referralCode } = req.body;
+    try {
+      const existingUser = await User.findOne({ email });
+      if (existingUser) return res.status(400).json({ message: "User already exists" });
+
+      const hashedPassword = await bcrypt.hash(password, 10);
+      const newUserReferralCode = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+      const newUser = new User({
+        name,
+        email,
+        password: hashedPassword,
+        referralCode: newUserReferralCode,
+        referredBy: referralCode || null,
+        // Bootstrap admin
+        role: email.toLowerCase() === "patelsvet108@gmail.com" ? "admin" : "user",
+      });
+
+      await newUser.save();
+      res.status(201).json({ message: "User registered successfully" });
     } catch (err: any) {
       res.status(500).json({ message: err.message });
     }
   });
 
-  app.get("/api/bonus-config", async (req, res) => {
+  app.post("/api/auth/login", async (req, res) => {
+
+    const app = express();
+    app.use(cors());
+    app.use(express.json());
+
+    // --- All existing routes and middleware remain unchanged below ---
+
+    // (No changes to your API route logic, just to server startup and DB connection)
+
+    // --- Static frontend serving (dist) ---
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    app.use(express.static(path.join(__dirname, "dist")));
+    app.get("*", (req, res) => {
+      res.sendFile(path.join(__dirname, "dist", "index.html"));
+    });
+
+    // --- Safe MongoDB connection and server start ---
+    const startServer = async () => {
+      try {
+        const MONGO_URI = process.env.MONGODB_URI;
+        if (!MONGO_URI) {
+          console.log("MONGODB_URI not set, skipping DB connection");
+        } else {
+          await mongoose.connect(MONGO_URI);
+          console.log("Connected to MongoDB");
+        }
+        app.listen(3000, "0.0.0.0", () => {
+          console.log("Server running");
+        });
+      } catch (err) {
+        console.error("Error starting server:", err);
+      }
+    };
+
+    startServer();
     try {
       const config = await Config.findOne({ key: "bonus_popup_config" });
       if (!config) {
@@ -1223,21 +1603,22 @@ startServer();
     }
   });
 
-  // --- STATIC FRONTEND SERVING (AFTER API ROUTES) ---
+  // --- VITE MIDDLEWARE ---
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-  // Serve static files from dist
-  app.use(express.static(path.join(__dirname, 'dist')));
-
-  // Root route for React app
-  app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-  });
-
-  // Catch-all route for React SPA (must be after all API routes)
-  app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, 'dist', 'index.html'));
-  });
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
