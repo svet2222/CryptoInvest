@@ -1642,22 +1642,17 @@ async function startServer() {
     }
   });
 
-  // --- VITE MIDDLEWARE ---
+  // --- STATIC FRONTEND SERVING ---
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-  if (process.env.NODE_ENV !== "production") {
-    const vite = await createViteServer({
-      server: { middlewareMode: true },
-      appType: "spa",
-    });
-    app.use(vite.middlewares);
-  } else {
-    const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
-    });
-  }
+  // Serve frontend static files from dist
+  const distPath = path.join(__dirname, "dist");
+  app.use(express.static(distPath));
+
+  // SPA fallback route for React frontend
+  app.get("*", (req, res) => {
+    res.sendFile(path.join(distPath, "index.html"));
+  });
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
