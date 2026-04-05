@@ -9,6 +9,7 @@ import cors from "cors";
 import dotenv from "dotenv";
 import multer from "multer";
 import fs from "fs";
+import { createServer as createViteServer } from "vite";
 
 dotenv.config();
 
@@ -1626,3 +1627,4 @@ async function startServer() {
 }
 
 startServer();
+
