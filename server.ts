@@ -283,7 +283,12 @@ const runProfitSimulation = async () => {
       if (isManual) continue;
 
       // Check if 24 hours passed since last profit
-      const lastProfit = new Date(inv.lastProfitDate || inv.startDate);
+      const lastProfitDate = inv.lastProfitDate ?? inv.startDate;
+      if (!lastProfitDate || !(typeof lastProfitDate === 'string' || typeof lastProfitDate === 'number' || lastProfitDate instanceof Date)) {
+        console.warn(`[Profit Engine] Investment ${inv._id} has invalid lastProfitDate or startDate. Skipping.`);
+        continue;
+      }
+      const lastProfit = new Date(lastProfitDate);
       const diffHours = (now.getTime() - lastProfit.getTime()) / (1000 * 60 * 60);
 
       if (diffHours >= 23) {
