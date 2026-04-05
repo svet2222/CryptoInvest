@@ -283,8 +283,14 @@ const runProfitSimulation = async () => {
       if (isManual) continue;
 
       // Check if 24 hours passed since last profit
-      const lastProfitRaw = inv.lastProfitDate ?? inv.startDate;
-      const lastProfit = lastProfitRaw ? new Date(lastProfitRaw) : new Date(0);
+      let lastProfit: Date;
+      if (inv.lastProfitDate instanceof Date) {
+        lastProfit = inv.lastProfitDate;
+      } else if (inv.startDate instanceof Date) {
+        lastProfit = inv.startDate;
+      } else {
+        lastProfit = new Date();
+      }
       const diffHours = (now.getTime() - lastProfit.getTime()) / (1000 * 60 * 60);
 
       if (diffHours >= 23) {
@@ -366,11 +372,8 @@ const isAdmin = (req: any, res: any, next: any) => {
 };
 
 async function startServer() {
-
-
   const app = express();
   const PORT = 3000;
-
 
   app.use(cors());
   app.use(express.json());
@@ -1639,23 +1642,22 @@ async function startServer() {
     }
   });
 
-
-  // --- VITE MIDDLEWARE & FRONTEND STATIC SERVE ---
+  // --- VITE MIDDLEWARE ---
   app.use("/uploads", express.static(path.join(process.cwd(), "uploads")));
 
-  // Serve frontend static files in production (Render, etc.)
-  const distPath = path.join(__dirname, "dist");
-  app.use(express.static(distPath));
-
-  // Serve index.html on root
-  app.get("/", (req, res) => {
-    res.sendFile(path.join(distPath, "index.html"));
-  });
-
-  // SPA fallback: serve index.html for any other route not handled by API
-  app.get("*", (req, res) => {
-    res.sendFile(path.join(distPath, "index.html"));
-  });
+  if (process.env.NODE_ENV !== "production") {
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.join(process.cwd(), 'dist');
+    app.use(express.static(distPath));
+    app.get('*', (req, res) => {
+      res.sendFile(path.join(distPath, 'index.html'));
+    });
+  }
 
   app.listen(PORT, "0.0.0.0", () => {
     console.log(`Server running on http://localhost:${PORT}`);
