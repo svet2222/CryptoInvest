@@ -283,12 +283,8 @@ const runProfitSimulation = async () => {
       if (isManual) continue;
 
       // Check if 24 hours passed since last profit
-      const lastProfitDate = inv.lastProfitDate ?? inv.startDate;
-      if (!lastProfitDate || !(typeof lastProfitDate === 'string' || typeof lastProfitDate === 'number' || lastProfitDate instanceof Date)) {
-        console.warn(`[Profit Engine] Investment ${inv._id} has invalid lastProfitDate or startDate. Skipping.`);
-        continue;
-      }
-      const lastProfit = new Date(lastProfitDate);
+      const lastProfitRaw = inv.lastProfitDate ?? inv.startDate;
+      const lastProfit = lastProfitRaw ? new Date(lastProfitRaw) : new Date(0);
       const diffHours = (now.getTime() - lastProfit.getTime()) / (1000 * 60 * 60);
 
       if (diffHours >= 23) {
@@ -370,8 +366,13 @@ const isAdmin = (req: any, res: any, next: any) => {
 };
 
 async function startServer() {
+
   const app = express();
   const PORT = 3000;
+
+  app.get("/", (req, res) => {
+    res.send("Server is running 🚀");
+  });
 
   app.use(cors());
   app.use(express.json());
