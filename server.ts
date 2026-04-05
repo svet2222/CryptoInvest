@@ -13,18 +13,8 @@ import fs from "fs";
 dotenv.config();
 
 // MongoDB Connection
-import mongoose from "mongoose";
-const MONGO_URI = process.env.MONGODB_URI;
-if (!MONGO_URI) {
-  console.error("MONGODB_URI not set");
-  process.exit(1);
-}
-mongoose.connect(MONGO_URI)
-  .then(() => console.log("Connected to MongoDB"))
-  .catch((err) => {
-    console.error("MongoDB connection error:", err);
-    process.exit(1);
-  });
+// Removed duplicate import
+// MongoDB connection is handled in startServer()
 
 // Ensure uploads directory exists
 const uploadDir = path.join(process.cwd(), "uploads");
@@ -56,12 +46,6 @@ const userSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
   walletBalance: { type: Number, default: 0 },
-  totalDeposits: { type: Number, default: 0 },
-  totalWithdrawals: { type: Number, default: 0 },
-  referralCode: { type: String, unique: true },
-  referredBy: { type: String, default: null },
-  totalReferralEarnings: { type: Number, default: 0 },
-  totalProfitEarned: { type: Number, default: 0 },
   totalBonusReceived: { type: Number, default: 0 },
   bonusBalance: { type: Number, default: 0 },
   hasSeenBonusPopup: { type: Boolean, default: false },
@@ -87,6 +71,11 @@ const userSchema = new mongoose.Schema({
     },
     submittedAt: Date
   },
+  totalDeposits: { type: Number, default: 0 },
+  totalWithdrawals: { type: Number, default: 0 },
+  referralCode: { type: String, unique: true, sparse: true },
+  referredBy: { type: String, default: null },
+  totalReferralEarnings: { type: Number, default: 0 },
   createdAt: { type: Date, default: Date.now },
 });
 
@@ -222,22 +211,6 @@ const offerSchema = new mongoose.Schema({
   isActive: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now }
 });
-const Offer = mongoose.model("Offer", offerSchema);
-
-const transactionSchema = new mongoose.Schema({
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
-  type: { type: String, enum: ["deposit", "withdrawal", "investment", "profit", "referral", "bonus"], required: true },
-  amount: { type: Number, required: true },
-  source: { type: String, default: null }, // e.g., "promo", "referral_commission"
-  status: { type: String, enum: ["pending", "completed", "failed"], default: "completed" },
-  timestamp: { type: Date, default: Date.now }
-});
-const Transaction = mongoose.model("Transaction", transactionSchema);
-
-const Bonus = mongoose.model("Bonus", bonusSchema);
-const Wallet = mongoose.model("Wallet", walletSchema);
-const Fees = mongoose.model("Fees", feesSchema);
-const SupportTicket = mongoose.model("SupportTicket", supportTicketSchema);
 
 const planSchema = new mongoose.Schema({
   name: { type: String, required: true },
@@ -251,6 +224,21 @@ const planSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 const Plan = mongoose.model("Plan", planSchema);
+const transactionSchema = new mongoose.Schema({
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+  type: { type: String, enum: ["deposit", "withdrawal", "investment", "profit", "referral", "bonus"], required: true },
+  amount: { type: Number, required: true },
+  source: { type: String, default: null }, // e.g., "promo", "referral_commission"
+  status: { type: String, enum: ["pending", "completed", "failed"], default: "completed" },
+  timestamp: { type: Date, default: Date.now }
+});
+const Transaction = mongoose.model("Transaction", transactionSchema);
+const Bonus = mongoose.model("Bonus", bonusSchema);
+const Wallet = mongoose.model("Wallet", walletSchema);
+const Fees = mongoose.model("Fees", feesSchema);
+const SupportTicket = mongoose.model("SupportTicket", supportTicketSchema);
+const Offer = mongoose.model("Offer", offerSchema);
+
 
 // --- PROFIT SIMULATION ENGINE ---
 const runProfitSimulation = async () => {
@@ -387,7 +375,21 @@ const isAdmin = (req: any, res: any, next: any) => {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+
+  // Connect to MongoDB here
+  const MONGO_URI = process.env.MONGODB_URI;
+  if (!MONGO_URI) {
+    console.error("MONGODB_URI not set");
+    process.exit(1);
+  }
+  try {
+    await mongoose.connect(MONGO_URI);
+    console.log("Connected to MongoDB");
+  } catch (err) {
+    console.error("MongoDB connection error:", err);
+    process.exit(1);
+  }
 
   app.use(cors());
   app.use(express.json());
@@ -426,6 +428,12 @@ async function startServer() {
         referredBy: referralCode || null,
         // Bootstrap admin
         role: email.toLowerCase() === "patelsvet108@gmail.com" ? "admin" : "user",
+        totalDeposits: 0,
+        totalWithdrawals: 0,
+        totalReferralEarnings: 0,
+        bonusBalance: 0,
+        hasSeenBonusPopup: false,
+        hasDeposited: false,
       });
 
       await newUser.save();
